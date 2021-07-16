@@ -50,7 +50,7 @@ const createRequest = (method, url, data, options) => {
     if (url.includes('music.163.com'))
       headers['Referer'] = 'https://music.163.com'
     if (options.realIP) headers['X-Real-IP'] = options.realIP
-    // headers['X-Real-IP'] = '118.88.88.88'
+    headers['X-Real-IP'] = '118.88.88.88'
     if (typeof options.cookie === 'object')
       headers['Cookie'] = Object.keys(options.cookie)
         .map(
@@ -111,7 +111,7 @@ const createRequest = (method, url, data, options) => {
     }
 
     const answer = { status: 500, body: {}, cookie: [] }
-    const settings = {
+    let settings = {
       method: method,
       url: url,
       headers: headers,
@@ -127,7 +127,7 @@ const createRequest = (method, url, data, options) => {
         settings.httpAgent = new PacProxyAgent(options.proxy)
         settings.httpsAgent = new PacProxyAgent(options.proxy)
       } else {
-        var purl = qs.parse(options.proxy)
+        const purl = qs.parse(options.proxy)
         if (purl.hostname) {
           const agent = tunnel.httpsOverHttp({
             proxy: {
@@ -143,7 +143,12 @@ const createRequest = (method, url, data, options) => {
         }
       }
     }
-
+    if (options.crypto === 'eapi') {
+      settings = {
+        ...settings,
+        responseType: 'arraybuffer',
+      }
+    }
     axios(settings)
       .then((res) => {
         const body = res.data
@@ -151,19 +156,35 @@ const createRequest = (method, url, data, options) => {
           x.replace(/\s*Domain=[^(;|$)]+;*/, ''),
         )
         try {
-          answer.body = body
+          if (options.crypto === 'eapi') {
+            answer.body = JSON.parse(encrypt.decrypt(body).toString())
+          } else {
+            answer.body = body
+          }
+
           answer.status = answer.body.code || res.status
-          if (answer.body.code === 502) {
+          if (
+            [201, 302, 400, 502, 800, 801, 802, 803].indexOf(answer.body.code) >
+            -1
+          ) {
+            // 特殊状态码
             answer.status = 200
           }
         } catch (e) {
-          answer.body = body
+          // console.log(e)
+          try {
+            answer.body = JSON.parse(body.toString())
+          } catch (err) {
+            // console.log(err)
+            // can't decrypt and can't parse directly
+            answer.body = body
+          }
           answer.status = res.status
         }
 
         answer.status =
           100 < answer.status && answer.status < 600 ? answer.status : 400
-        if (answer.status == 200) resolve(answer)
+        if (answer.status === 200) resolve(answer)
         else reject(answer)
       })
       .catch((err) => {
